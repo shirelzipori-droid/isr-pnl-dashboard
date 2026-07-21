@@ -150,6 +150,17 @@
   .owner-card .pace-label{font-size:11px;color:var(--muted);margin-top:5px;font-family:'Monaspace Xenon',monospace;text-align:center}
   .gauge-wrap{display:flex;justify-content:center;margin-top:10px}
   .gauge-caption{font-family:'Geist',sans-serif;font-size:13px;font-weight:700;color:var(--text);text-align:center;margin:4px 0 0}
+  .summary-textarea{width:100%;min-height:260px;border:1px solid var(--border);border-radius:10px;padding:14px 16px;
+    font-family:'Geist',sans-serif;font-size:14.5px;line-height:1.7;color:var(--text);resize:vertical;box-sizing:border-box}
+  .summary-textarea:focus{outline:none;border-color:var(--teal)}
+  .summary-display{white-space:pre-wrap;font-family:'Geist',sans-serif;font-size:14.5px;line-height:1.7;color:var(--text);min-height:80px}
+  .summary-display.empty{color:var(--dim);font-style:italic}
+  .summary-btn{font-family:'Geist',sans-serif;font-size:13px;font-weight:600;padding:9px 20px;border-radius:20px;border:none;cursor:pointer;margin-top:14px}
+  .summary-btn.save{background:var(--teal);color:#fff}
+  .summary-btn.save:hover{background:var(--teal-deep)}
+  .summary-btn.edit{background:var(--teal-mist);color:var(--teal-deep)}
+  .summary-btn.edit:hover{background:var(--teal-mist2)}
+  .summary-saved-note{font-size:11px;color:var(--dim);margin-top:8px;font-family:'Monaspace Xenon',monospace}
   .rate-row{display:flex;flex-direction:column;align-items:center;gap:7px;font-size:12.5px;padding:10px 12px;border-radius:9px;background:#f4f4f2;margin-top:8px;font-family:'Monaspace Xenon',monospace;text-align:center}
   .rate-row .rate-title{font-family:'Geist',sans-serif;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;white-space:nowrap}
   .rate-row .rate-values{display:flex;flex-wrap:wrap;justify-content:center;gap:8px 18px;font-size:14px}
@@ -171,6 +182,7 @@
 <div class="tab-switch-bar">
   <button class="tab-switch-btn active" data-tab="main">Main Dashboard</button>
   <button class="tab-switch-btn" data-tab="owner">Income/Costs by Owner vs Budget</button>
+  <button class="tab-switch-btn" data-tab="summary">Executive Summary</button>
 </div>
 <div class="wrap" id="tab-main">
   <h1>Israel — P&amp;L structure <span class="accent">Actual vs Original Budget vs H2 Plan</span></h1>
@@ -276,6 +288,22 @@
   </div>
 
   <div id="owner-cards-container"></div>
+</div>
+
+<div class="wrap" id="tab-summary" style="display:none">
+  <h1>Israel — <span class="accent">Executive Summary</span></h1>
+  <p class="subtitle">Pick one period, then write and save your commentary for it.</p>
+
+  <div class="picker-box" style="margin-bottom:24px">
+    <div class="picker-group" style="margin-bottom:0">
+      <p class="gtitle">Period (choose one)</p>
+      <div class="periods" id="picker-summary-period"></div>
+    </div>
+  </div>
+
+  <div class="table-card">
+    <div style="padding:20px" id="summary-content"></div>
+  </div>
 </div>
 
 <script>
@@ -395,14 +423,17 @@ function costFlexBudget(costDef, periodsOrdered){
   const ratio = costBudgetSel/denomBudgetSel;
   return ratio * actualDenom;
 }
-function costPace(costDef){
+function costPace(costDef, periodsOrdered){
   const [label, gl, leader, method, source, annualBudget] = costDef;
   if(method!=='Absolute' || annualBudget==null) return null;
-  const monthsYTD = MONTH_PERIODS.slice(0, CURRENT_MONTH_INDEX+1);
-  const actualYTD = costActualForPeriods(costDef, monthsYTD);
-  const expectedPct = (CURRENT_MONTH_INDEX+1)/12*100;
-  const actualPct = Math.abs(actualYTD)/Math.abs(annualBudget)*100;
-  return {actualPct, expectedPct, actualYTD};
+  const monthSet = new Set();
+  periodsOrdered.forEach(p=> periodToMonths(p).forEach(m=>monthSet.add(m)));
+  const monthCount = monthSet.size;
+  if(monthCount===0) return null;
+  const actualSel = costActualForPeriods(costDef, [...monthSet]);
+  const expectedPct = (monthCount/12)*100;
+  const actualPct = Math.abs(actualSel)/Math.abs(annualBudget)*100;
+  return {actualPct, expectedPct, actualYTD: actualSel, monthSet};
 }
 
 const MODES = [
@@ -1072,26 +1103,75 @@ function renderOwnerCards(){
         <div class="ab-box budget"><p class="ab-label">Budget</p><p class="ab-value">${fmtBridgeVal(Math.abs(budget),'absolute').replace(/^\+/,'')}</p>${rates?`<p class="ab-sub">${fmtRate(rates.budgetRate, rates.isPct)}</p>`:''}</div></div>
         <div class="gap-box ${cls}"><span class="gap-label">${arrow} Gap ${d>=0?'(under budget)':'(over budget)'}</span><span class="gap-value">${deltaAbsStr} · ${gapPct}</span>${rateGapLine}</div>`;
     }
-    const pace = costPace(costDef);
+    const pace = costPace(costDef, periodsOrdered);
     if(pace){
-      const startMonth = MONTH_PERIODS[0].split(' ')[0];
-      const endMonth = MONTH_PERIODS[CURRENT_MONTH_INDEX].split(' ')[0];
+      const sortedMonths = [...pace.monthSet].sort((a,b)=> MONTH_PERIODS.indexOf(a)-MONTH_PERIODS.indexOf(b));
+      const startMonth = sortedMonths[0].split(' ')[0];
+      const endMonth = sortedMonths[sortedMonths.length-1].split(' ')[0];
+      const rangeLabel = sortedMonths.length>1 ? `${startMonth}–${endMonth}` : startMonth;
       html += `<div class="gauge-wrap">${buildGaugeSVG(pace.actualPct, pace.expectedPct)}</div>
-        <p class="gauge-caption">${startMonth}–${endMonth} = ${pace.expectedPct.toFixed(0)}% expected</p>`;
+        <p class="gauge-caption">${rangeLabel} = ${pace.expectedPct.toFixed(0)}% expected</p>`;
     }
     card.innerHTML = html;
     grid.appendChild(card);
   });
   container.appendChild(grid);
 }
+let summaryPeriod = 'FY 2026';
+let summaryEditing = false;
+
+function renderSummaryPeriodPicker(){
+  const el = document.getElementById('picker-summary-period');
+  el.innerHTML = '';
+  ALL_PERIODS.forEach(p=>{
+    const label = document.createElement('label');
+    label.className = summaryPeriod===p ? 'checked' : '';
+    const cb = document.createElement('input');
+    cb.type = 'radio';
+    cb.name = 'summaryperiod';
+    cb.checked = summaryPeriod===p;
+    cb.onchange = ()=>{ summaryPeriod = p; summaryEditing = false; renderSummaryPeriodPicker(); renderSummaryContent(); };
+    label.appendChild(cb);
+    label.appendChild(document.createTextNode(p));
+    label.onclick = ()=>{ summaryPeriod = p; summaryEditing = false; renderSummaryPeriodPicker(); renderSummaryContent(); };
+    el.appendChild(label);
+  });
+}
+function summaryKey(){ return 'exec_summary_' + summaryPeriod; }
+function renderSummaryContent(){
+  const container = document.getElementById('summary-content');
+  const saved = localStorage.getItem(summaryKey());
+  if(summaryEditing || !saved){
+    container.innerHTML = `
+      <textarea class="summary-textarea" id="summary-textarea" placeholder="Write your executive summary for ${summaryPeriod}...">${saved ? saved.replace(/</g,'&lt;') : ''}</textarea>
+      <button class="summary-btn save" id="summary-save-btn">Save</button>`;
+    document.getElementById('summary-save-btn').onclick = ()=>{
+      const text = document.getElementById('summary-textarea').value;
+      localStorage.setItem(summaryKey(), text);
+      summaryEditing = false;
+      renderSummaryContent();
+    };
+  } else {
+    container.innerHTML = `
+      <div class="summary-display">${saved.replace(/</g,'&lt;')}</div>
+      <button class="summary-btn edit" id="summary-edit-btn">Edit</button>
+      <p class="summary-saved-note">Saved for ${summaryPeriod} · stored in this browser</p>`;
+    document.getElementById('summary-edit-btn').onclick = ()=>{
+      summaryEditing = true;
+      renderSummaryContent();
+    };
+  }
+}
 function switchTab(tab){
   activeTab = tab;
   document.getElementById('tab-main').style.display = tab==='main' ? 'block' : 'none';
   document.getElementById('tab-owner').style.display = tab==='owner' ? 'block' : 'none';
+  document.getElementById('tab-summary').style.display = tab==='summary' ? 'block' : 'none';
   document.querySelectorAll('.tab-switch-btn').forEach(b=>{
     b.classList.toggle('active', b.dataset.tab===tab);
   });
   if(tab==='owner') renderOwnerCards();
+  if(tab==='summary'){ renderSummaryPeriodPicker(); renderSummaryContent(); }
 }
 document.querySelectorAll('.tab-switch-btn').forEach(b=>{
   b.onclick = ()=> switchTab(b.dataset.tab);
